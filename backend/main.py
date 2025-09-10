@@ -1,8 +1,8 @@
 # main.py
 import os
 from fastapi import FastAPI, Depends, HTTPException
-from db import engine, SessionLocal, Base
-import models
+from backend.db import engine, SessionLocal, Base
+from backend import models
 from datetime import datetime
 from pydantic import BaseModel
 from sqlalchemy.orm import Session

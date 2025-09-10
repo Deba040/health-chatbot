@@ -4,6 +4,8 @@ uvicorn[standard]
 SQLAlchemy
 psycopg2-binary
 python-dotenv
+pydantic
+python-multipart
 
 # --- ML / Data scripts ---
 requests

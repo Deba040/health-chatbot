@@ -77,7 +77,7 @@ def ask_ml(question: str):
 @app.get("/faq")
 def get_faq():
     faqs = []
-    FAQ_PATH = os.path.join(os.path.dirname(__file__), "..", "knowledge_base", "test_queries.csv")
+    FAQ_PATH = os.path.join(os.path.dirname(__file__), "..", "knowledge_base_docs", "test_queries.csv")
 
     if not os.path.exists(FAQ_PATH):
         return {"faqs": [], "error": "FAQ file not found"}

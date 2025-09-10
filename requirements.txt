@@ -1,0 +1,13 @@
+# --- Backend ---
+fastapi
+uvicorn[standard]
+SQLAlchemy
+psycopg2-binary
+python-dotenv
+
+# --- ML / Data scripts ---
+requests
+beautifulsoup4
+lxml
+tqdm
+PyPDF2

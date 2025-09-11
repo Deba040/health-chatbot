@@ -3,9 +3,13 @@ fastapi
 uvicorn[standard]
 SQLAlchemy
 psycopg2-binary
-python-dotenv
 pydantic
+python-dotenv
 python-multipart
+sentence-transformers
+faiss-cpu
+requests
+
 
 # --- ML / Data scripts ---
 requests

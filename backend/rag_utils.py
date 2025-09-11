@@ -78,6 +78,7 @@
 
 
 # backend/rag_utils.py
+#import os
 import faiss
 import json
 import numpy as np
@@ -92,6 +93,9 @@ META_PATH = Path("knowledge_base_docs/index_meta.json")
 
 # 🔗 Set your Colab MedGemma public URL (replace ngrok link when you restart Colab)
 MEDGEMMA_URL = "MEDGEMMA_URL"
+
+#MEDGEMMA_URL = os.getenv("MEDGEMMA_URL", "https://<your-ngrok-id>.ngrok-free.app/v1/medgemma/infer")
+
 
 class RAGHelper:
     def __init__(self, index_path=INDEX_PATH, meta_path=META_PATH, model_name="sentence-transformers/all-MiniLM-L6-v2"):

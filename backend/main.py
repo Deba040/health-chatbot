@@ -448,6 +448,164 @@
 #     return answer
 
 # backend/main.py
+# import os
+# import csv
+# from datetime import datetime
+# from fastapi import FastAPI, Depends, HTTPException, Form
+# from fastapi.responses import PlainTextResponse
+# from pydantic import BaseModel
+# from sqlalchemy.orm import Session
+
+# from backend.db import engine, SessionLocal, Base
+# from backend import models
+# from backend.rag_utils import retrieve_docs, ask_medgemma
+
+# # Auto-create tables
+# Base.metadata.create_all(bind=engine)
+
+# app = FastAPI(title="AI Health Chatbot Backend (Prototype)")
+
+# # ---------------------------
+# # Pydantic Schemas
+# # ---------------------------
+# class QueryIn(BaseModel):
+#     phone: str
+#     message: str
+#     channel: str = "whatsapp"
+
+# class QueryOut(BaseModel):
+#     query_id: int
+#     status: str
+
+# class RAGIn(BaseModel):
+#     question: str
+#     top_k: int = 3
+
+# # ---------------------------
+# # DB Dependency
+# # ---------------------------
+# def get_db():
+#     db = SessionLocal()
+#     try:
+#         yield db
+#     finally:
+#         db.close()
+
+# # ---------------------------
+# # Routes
+# # ---------------------------
+# @app.get("/health")
+# def health():
+#     return {"status": "ok", "time": datetime.utcnow().isoformat() + "Z"}
+
+
+# @app.post("/query", response_model=QueryOut)
+# def receive_query(payload: QueryIn, db: Session = Depends(get_db)):
+#     # find or create user
+#     user = db.query(models.User).filter(models.User.phone == payload.phone).first()
+#     if not user:
+#         user = models.User(phone=payload.phone)
+#         db.add(user)
+#         db.commit()
+#         db.refresh(user)
+
+#     # save query
+#     q = models.Query(
+#         user_id=user.id,
+#         channel=payload.channel,
+#         message_text=payload.message,
+#         status="received"
+#     )
+#     db.add(q)
+#     db.commit()
+#     db.refresh(q)
+
+#     return {"query_id": q.id, "status": "saved"}
+
+
+# @app.post("/ask-ml")
+# def ask_ml(question: str):
+#     # 🚧 Legacy stub (kept for testing only)
+#     return {"answer": f"Stub response for: {question}"}
+
+
+# @app.get("/faq")
+# def get_faq():
+#     faqs = []
+#     FAQ_PATH = os.path.join(os.path.dirname(__file__), "..", "knowledge_base_docs", "test_queries.csv")
+
+#     if not os.path.exists(FAQ_PATH):
+#         return {"faqs": [], "error": "FAQ file not found"}
+
+#     with open(FAQ_PATH, newline="", encoding="utf-8") as f:
+#         reader = csv.DictReader(f)
+#         for row in reader:
+#             faqs.append({
+#                 "id": row["query_id"],
+#                 "category": row["category"],
+#                 "question": row["question"],
+#                 "answer": row["answer"]
+#             })
+#     return {"faqs": faqs}
+
+
+# @app.post("/webhook/twilio", response_class=PlainTextResponse)
+# def twilio_webhook(
+#     From: str = Form(...),  # sender's phone number
+#     Body: str = Form(...),  # message text
+#     To: str = Form(...),    # your Twilio number
+#     db: Session = Depends(get_db)
+# ):
+#     phone = From.replace("whatsapp:", "").strip()
+
+#     # Find or create user
+#     user = db.query(models.User).filter(models.User.phone == phone).first()
+#     if not user:
+#         user = models.User(phone=phone)
+#         db.add(user)
+#         db.commit()
+#         db.refresh(user)
+
+#     # Save query
+#     q = models.Query(
+#         user_id=user.id,
+#         channel="whatsapp",
+#         message_text=Body,
+#         status="received"
+#     )
+#     db.add(q)
+#     db.commit()
+#     db.refresh(q)
+
+#     # --- Call RAG pipeline (retrieve + MedGemma) ---
+#     retrieved = retrieve_docs(Body, top_k=3)
+#     rag_result = ask_medgemma(Body, retrieved)
+
+#     answer = rag_result.get("answer", "Sorry, AI could not answer.")
+
+#     # Save AI response
+#     q.response_text = answer
+#     q.status = "answered"
+#     db.commit()
+
+#     # Respond to Twilio (plain text)
+#     return answer
+
+
+# @app.post("/rag-ask")
+# def rag_ask(payload: RAGIn):
+#     """Full RAG endpoint: retrieve docs + MedGemma response"""
+#     retrieved = retrieve_docs(payload.question, top_k=payload.top_k)
+#     rag_result = ask_medgemma(payload.question, retrieved)
+#     return {
+#         "question": payload.question,
+#         "retrieved": retrieved,
+#         "answer": rag_result.get("answer"),
+#         "debug": rag_result
+#     }
+
+
+# backend/main.py
 import os
 import csv
 from datetime import datetime
@@ -480,6 +638,12 @@ class QueryOut(BaseModel):
 class RAGIn(BaseModel):
     question: str
     top_k: int = 3
+
+# NEW: Reminder Schema
+class ReminderIn(BaseModel):
+    user_id: int
+    vaccine_name: str
+    due_date: str   # ISO format: YYYY-MM-DD
 
 # ---------------------------
 # DB Dependency
@@ -525,7 +689,6 @@ def receive_query(payload: QueryIn, db: Session = Depends(get_db)):
 
 @app.post("/ask-ml")
 def ask_ml(question: str):
-    # 🚧 Legacy stub (kept for testing only)
     return {"answer": f"Stub response for: {question}"}
 
 
@@ -551,14 +714,13 @@ def get_faq():
 
 @app.post("/webhook/twilio", response_class=PlainTextResponse)
 def twilio_webhook(
-    From: str = Form(...),  # sender's phone number
-    Body: str = Form(...),  # message text
-    To: str = Form(...),    # your Twilio number
+    From: str = Form(...),
+    Body: str = Form(...),
+    To: str = Form(...),
     db: Session = Depends(get_db)
 ):
     phone = From.replace("whatsapp:", "").strip()
 
-    # Find or create user
     user = db.query(models.User).filter(models.User.phone == phone).first()
     if not user:
         user = models.User(phone=phone)
@@ -566,7 +728,6 @@ def twilio_webhook(
         db.commit()
         db.refresh(user)
 
-    # Save query
     q = models.Query(
         user_id=user.id,
         channel="whatsapp",
@@ -577,24 +738,19 @@ def twilio_webhook(
     db.commit()
     db.refresh(q)
 
-    # --- Call RAG pipeline (retrieve + MedGemma) ---
     retrieved = retrieve_docs(Body, top_k=3)
     rag_result = ask_medgemma(Body, retrieved)
-
     answer = rag_result.get("answer", "Sorry, AI could not answer.")
 
-    # Save AI response
     q.response_text = answer
     q.status = "answered"
     db.commit()
 
-    # Respond to Twilio (plain text)
     return answer
 
 
 @app.post("/rag-ask")
 def rag_ask(payload: RAGIn):
-    """Full RAG endpoint: retrieve docs + MedGemma response"""
     retrieved = retrieve_docs(payload.question, top_k=payload.top_k)
     rag_result = ask_medgemma(payload.question, retrieved)
     return {
@@ -603,3 +759,32 @@ def rag_ask(payload: RAGIn):
         "answer": rag_result.get("answer"),
         "debug": rag_result
     }
+
+# ---------------------------
+# NEW: Vaccination Mock Endpoint
+# ---------------------------
+@app.get("/vaccination/mock")
+def mock_vaccination():
+    return {
+        "status": "ok",
+        "slots": [
+            {"date": "2025-09-20", "vaccine": "COVID-19", "center": "Community Clinic"},
+            {"date": "2025-09-21", "vaccine": "Hepatitis B", "center": "City Hospital"}
+        ]
+    }
+
+# ---------------------------
+# NEW: Create Reminder Endpoint
+# ---------------------------
+@app.post("/reminder")
+def create_reminder(payload: ReminderIn, db: Session = Depends(get_db)):
+    reminder = models.Reminder(
+        user_id=payload.user_id,
+        vaccine_name=payload.vaccine_name,
+        due_date=payload.due_date,
+        status="pending"
+    )
+    db.add(reminder)
+    db.commit()
+    db.refresh(reminder)
+    return {"id": reminder.id, "status": reminder.status}

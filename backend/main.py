@@ -728,25 +728,46 @@ def twilio_webhook(
         db.commit()
         db.refresh(user)
 
-    q = models.Query(
-        user_id=user.id,
-        channel="whatsapp",
-        message_text=Body,
-        status="received"
-    )
-    db.add(q)
-    db.commit()
-    db.refresh(q)
+    text = Body.lower().strip()
 
-    retrieved = retrieve_docs(Body, top_k=3)
-    rag_result = ask_medgemma(Body, retrieved)
-    answer = rag_result.get("answer", "Sorry, AI could not answer.")
+    # ---- Vaccination Chat Flow ----
+    if "schedule" in text or "check vaccination" in text:
+        schedule = [
+            "20 Sep 2025 - COVID-19 @ Community Clinic",
+            "21 Sep 2025 - Hepatitis B @ City Hospital",
+            "25 Sep 2025 - Polio @ Primary Health Center"
+        ]
+        answer = "📅 Upcoming vaccination slots:\n" + "\n".join(schedule)
+    
+    elif "reminder" in text or "set reminder" in text:
+        # Example: "Set reminder for Polio on 2025-09-25"
+        try:
+            parts = Body.split("for")[1].strip().split("on")
+            vaccine_name = parts[0].strip()
+            due_date = parts[1].strip()
 
-    q.response_text = answer
-    q.status = "answered"
-    db.commit()
+            reminder = models.Reminder(
+                user_id=user.id,
+                vaccine_name=vaccine_name,
+                due_date=due_date,
+                status="pending"
+            )
+            db.add(reminder)
+            db.commit()
+            db.refresh(reminder)
+
+            answer = f"✅ Reminder set for {vaccine_name} on {due_date}."
+        except Exception:
+            answer = "⚠️ Please use format: 'Set reminder for <vaccine> on YYYY-MM-DD'"
+
+    else:
+        # Fallback → RAG pipeline
+        payload = RAGIn(question=Body, top_k=3)
+        rag_response = rag_query(payload, db)
+        answer = rag_response["answer"]
 
     return answer
+
 
 
 @app.post("/rag-ask")
@@ -760,24 +781,71 @@ def rag_ask(payload: RAGIn):
         "debug": rag_result
     }
 
+@app.post("/rag-query")
+def rag_query(payload: RAGIn, db: Session = Depends(get_db)):
+    try:
+        # Store query in DB (optional if already handled)
+        user = db.query(models.User).filter(models.User.phone == "test_user").first()
+        if not user:
+            user = models.User(phone="test_user")
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+
+        q = models.Query(
+            user_id=user.id,
+            channel="internal",
+            message_text=payload.question,
+            status="received"
+        )
+        db.add(q)
+        db.commit()
+        db.refresh(q)
+
+        # Run RAG pipeline
+        retrieved = retrieve_docs(payload.question, top_k=payload.top_k)
+        rag_result = ask_medgemma(payload.question, retrieved)
+        answer = rag_result.get("answer", "⚠️ Sorry, AI could not answer.")
+
+        # Update DB with answer
+        q.response_text = answer
+        q.status = "answered"
+        db.commit()
+
+        return {
+            "query_id": q.id,
+            "question": payload.question,
+            "retrieved": retrieved,
+            "answer": answer,
+            "status": q.status
+        }
+
+    except Exception as e:
+        import logging
+        logging.error(f"/rag-query failed: {e}")
+        raise HTTPException(status_code=500, detail="RAG pipeline error")
+
+
 # ---------------------------
 # NEW: Vaccination Mock Endpoint
 # ---------------------------
-@app.get("/vaccination/mock")
-def mock_vaccination():
+@app.get("/vaccination/schedule")
+def vaccination_schedule():
     return {
         "status": "ok",
-        "slots": [
+        "schedule": [
             {"date": "2025-09-20", "vaccine": "COVID-19", "center": "Community Clinic"},
-            {"date": "2025-09-21", "vaccine": "Hepatitis B", "center": "City Hospital"}
+            {"date": "2025-09-21", "vaccine": "Hepatitis B", "center": "City Hospital"},
+            {"date": "2025-09-25", "vaccine": "Polio", "center": "Primary Health Center"}
         ]
     }
+
 
 # ---------------------------
 # NEW: Create Reminder Endpoint
 # ---------------------------
-@app.post("/reminder")
-def create_reminder(payload: ReminderIn, db: Session = Depends(get_db)):
+@app.post("/vaccination/reminder")
+def set_reminder(payload: ReminderIn, db: Session = Depends(get_db)):
     reminder = models.Reminder(
         user_id=payload.user_id,
         vaccine_name=payload.vaccine_name,
@@ -788,3 +856,4 @@ def create_reminder(payload: ReminderIn, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(reminder)
     return {"id": reminder.id, "status": reminder.status}
+

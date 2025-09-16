@@ -729,6 +729,9 @@ def twilio_webhook(
         phone = From.strip()
         channel = "sms"
 
+    # For now: hardcoded language (later detect from user profile or auto-detect)
+    lang = "hi"
+
     # Find or create user
     user = db.query(models.User).filter(models.User.phone == phone).first()
     if not user:
@@ -737,7 +740,7 @@ def twilio_webhook(
         db.commit()
         db.refresh(user)
 
-    # Save incoming query
+    # Save query
     q = models.Query(
         user_id=user.id,
         channel=channel,
@@ -748,23 +751,19 @@ def twilio_webhook(
     db.commit()
     db.refresh(q)
 
-    # ---- Handle intents ----
+    # Intent handling
     if "schedule" in Body.lower():
-        answer = "📅 Vaccination slots:\n20 Sep - COVID-19 @ Clinic\n21 Sep - Hepatitis B @ Hospital"
+        answer = get_message("check_schedule", lang)
     elif "reminder" in Body.lower():
-        answer = "✅ Reminder set! We’ll notify you before your vaccine date."
+        answer = get_message("set_reminder", lang, vaccine="COVID-19", date="2025-09-20")
+    elif Body.strip() == "1" and channel == "sms":
+        answer = get_message("chw_followup", lang)
     else:
-        # Fallback → RAG pipeline
-        payload = RAGIn(question=Body, top_k=3)
-        rag_response = rag_query(payload, db)
-        answer = rag_response["answer"]
+        answer = get_message("welcome", lang)
 
-    # ---- SMS shortener ----
-    if channel == "sms":
-        if len(answer) > 160:
-            answer = "Your query is complex. A CHW will follow up. Reply 1 if urgent."
-        else:
-            answer += "\nReply 1 for CHW help."
+    # SMS length rule
+    if channel == "sms" and len(answer) > 160:
+        answer = "Query too long. CHW will follow up."
 
     # Save response
     q.response_text = answer
@@ -772,7 +771,6 @@ def twilio_webhook(
     db.commit()
 
     return answer
-
     # ---- Vaccination Chat Flow ----
     if "schedule" in text or "check vaccination" in text:
         schedule = [

@@ -721,7 +721,7 @@ def twilio_webhook(
     To: str = Form(...),
     db: Session = Depends(get_db)
 ):
-    # Detect channel
+    # --- Detect channel (WhatsApp vs SMS) ---
     if "whatsapp:" in From:
         phone = From.replace("whatsapp:", "").strip()
         channel = "whatsapp"
@@ -729,10 +729,10 @@ def twilio_webhook(
         phone = From.strip()
         channel = "sms"
 
-    # For now: hardcoded language (later detect from user profile or auto-detect)
+    # --- Language setup (later: auto-detect or user profile) ---
     lang = "hi"
 
-    # Find or create user
+    # --- Find or create user ---
     user = db.query(models.User).filter(models.User.phone == phone).first()
     if not user:
         user = models.User(phone=phone)
@@ -740,7 +740,7 @@ def twilio_webhook(
         db.commit()
         db.refresh(user)
 
-    # Save query
+    # --- Save incoming query ---
     q = models.Query(
         user_id=user.id,
         channel=channel,
@@ -751,38 +751,21 @@ def twilio_webhook(
     db.commit()
     db.refresh(q)
 
-    # Intent handling
-    if "schedule" in Body.lower():
-        answer = get_message("check_schedule", lang)
-    elif "reminder" in Body.lower():
-        answer = get_message("set_reminder", lang, vaccine="COVID-19", date="2025-09-20")
-    elif Body.strip() == "1" and channel == "sms":
-        answer = get_message("chw_followup", lang)
-    else:
-        answer = get_message("welcome", lang)
+    # --- Intent handling ---
+    text = Body.lower().strip()
 
-    # SMS length rule
-    if channel == "sms" and len(answer) > 160:
-        answer = "Query too long. CHW will follow up."
-
-    # Save response
-    q.response_text = answer
-    q.status = "answered"
-    db.commit()
-
-    return answer
-    # ---- Vaccination Chat Flow ----
     if "schedule" in text or "check vaccination" in text:
-        schedule = [
-            "20 Sep 2025 - COVID-19 @ Community Clinic",
-            "21 Sep 2025 - Hepatitis B @ City Hospital",
+        # Upcoming slots
+        answer = (
+            "📅 Upcoming vaccination slots:\n"
+            "20 Sep 2025 - COVID-19 @ Community Clinic\n"
+            "21 Sep 2025 - Hepatitis B @ City Hospital\n"
             "25 Sep 2025 - Polio @ Primary Health Center"
-        ]
-        answer = "📅 Upcoming vaccination slots:\n" + "\n".join(schedule)
-    
+        )
+
     elif "reminder" in text or "set reminder" in text:
-        # Example: "Set reminder for Polio on 2025-09-25"
         try:
+            # Example: "Set reminder for Polio on 2025-09-25"
             parts = Body.split("for")[1].strip().split("on")
             vaccine_name = parts[0].strip()
             due_date = parts[1].strip()
@@ -798,16 +781,78 @@ def twilio_webhook(
             db.refresh(reminder)
 
             answer = f"✅ Reminder set for {vaccine_name} on {due_date}."
-        except Exception:
+        except Exception as e:
+            print("Reminder parsing error:", e)  # Debug in Render logs
+            answer = "⚠️ Please use format: 'Set reminder for <vaccine> on YYYY-MM-DD'"
+
+    elif text == "1" and channel == "sms":
+        # Escalation option for SMS
+        answer = get_message("chw_followup", lang)
+
+    else:
+        # Fallback → RAG pipeline
+        try:
+            payload = RAGIn(question=Body, top_k=3)
+            rag_response = rag_query(payload, db)
+            answer = rag_response["answer"]
+        except Exception as e:
+            print("RAG error:", e)
+            answer = get_message("default", lang)
+
+    # --- SMS-specific rule: keep short ---
+    if channel == "sms" and len(answer) > 160:
+        answer = "Query too long. CHW will follow up."
+
+    # --- Save response ---
+    q.response_text = answer
+    q.status = "answered"
+    db.commit()
+
+    return answer
+
+    # ---- Vaccination Chat Flow ----
+    def process_user_message(text: str, db: Session, user: models.User) -> str:
+    """Decide how to respond based on user message."""
+    text_lower = text.lower()
+
+    if "schedule" in text_lower or "check vaccination" in text_lower:
+        schedule = [
+            "20 Sep 2025 - COVID-19 @ Community Clinic",
+            "21 Sep 2025 - Hepatitis B @ City Hospital",
+            "25 Sep 2025 - Polio @ Primary Health Center"
+        ]
+        answer = "📅 Upcoming vaccination slots:\n" + "\n".join(schedule)
+
+    elif "reminder" in text_lower or "set reminder" in text_lower:
+        try:
+            # Example input: "Set reminder for Polio on 2025-09-25"
+            parts = text.split("for")[1].strip().split("on")
+            vaccine_name = parts[0].strip()
+            due_date = parts[1].strip()
+
+            reminder = models.Reminder(
+                user_id=user.id,
+                vaccine_name=vaccine_name,
+                due_date=due_date,
+                status="pending"
+            )
+            db.add(reminder)
+            db.commit()
+            db.refresh(reminder)
+
+            answer = f"✅ Reminder set for {vaccine_name} on {due_date}."
+        except Exception as e:
+            print("Reminder parsing error:", e)  # Debug log
             answer = "⚠️ Please use format: 'Set reminder for <vaccine> on YYYY-MM-DD'"
 
     else:
         # Fallback → RAG pipeline
-        payload = RAGIn(question=Body, top_k=3)
+        payload = RAGIn(question=text, top_k=3)
         rag_response = rag_query(payload, db)
         answer = rag_response["answer"]
 
     return answer
+
 
 
 

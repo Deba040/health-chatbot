@@ -721,10 +721,15 @@ def twilio_webhook(
     To: str = Form(...),
     db: Session = Depends(get_db)
 ):
-    phone = From.replace("whatsapp:", "").strip()
-    lang = "hi"  # 🚨 Later: detect or store user preference, here hardcoded for demo
+    # Detect channel
+    if "whatsapp:" in From:
+        phone = From.replace("whatsapp:", "").strip()
+        channel = "whatsapp"
+    else:
+        phone = From.strip()
+        channel = "sms"
 
-    # save query
+    # Find or create user
     user = db.query(models.User).filter(models.User.phone == phone).first()
     if not user:
         user = models.User(phone=phone)
@@ -732,9 +737,10 @@ def twilio_webhook(
         db.commit()
         db.refresh(user)
 
+    # Save incoming query
     q = models.Query(
         user_id=user.id,
-        channel="whatsapp",
+        channel=channel,
         message_text=Body,
         status="received"
     )
@@ -742,19 +748,31 @@ def twilio_webhook(
     db.commit()
     db.refresh(q)
 
-    # Simple intent handling demo
+    # ---- Handle intents ----
     if "schedule" in Body.lower():
-        answer = get_message("check_schedule", lang)
+        answer = "📅 Vaccination slots:\n20 Sep - COVID-19 @ Clinic\n21 Sep - Hepatitis B @ Hospital"
     elif "reminder" in Body.lower():
-        answer = get_message("set_reminder", lang, vaccine="COVID-19", date="2025-09-20")
+        answer = "✅ Reminder set! We’ll notify you before your vaccine date."
     else:
-        answer = get_message("welcome", lang)
+        # Fallback → RAG pipeline
+        payload = RAGIn(question=Body, top_k=3)
+        rag_response = rag_query(payload, db)
+        answer = rag_response["answer"]
 
+    # ---- SMS shortener ----
+    if channel == "sms":
+        if len(answer) > 160:
+            answer = "Your query is complex. A CHW will follow up. Reply 1 if urgent."
+        else:
+            answer += "\nReply 1 for CHW help."
+
+    # Save response
     q.response_text = answer
     q.status = "answered"
     db.commit()
 
     return answer
+
     # ---- Vaccination Chat Flow ----
     if "schedule" in text or "check vaccination" in text:
         schedule = [

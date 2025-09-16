@@ -9,6 +9,9 @@ python-multipart
 sentence-transformers
 faiss-cpu
 requests
+gTTS
+twilio
+python-multipart
 
 
 # --- ML / Data scripts ---

@@ -617,6 +617,8 @@ from sqlalchemy.orm import Session
 from backend.db import engine, SessionLocal, Base
 from backend import models
 from backend.rag_utils import retrieve_docs, ask_medgemma
+from backend.utils import get_message
+
 
 # Auto-create tables
 Base.metadata.create_all(bind=engine)
@@ -720,7 +722,9 @@ def twilio_webhook(
     db: Session = Depends(get_db)
 ):
     phone = From.replace("whatsapp:", "").strip()
+    lang = "hi"  # 🚨 Later: detect or store user preference, here hardcoded for demo
 
+    # save query
     user = db.query(models.User).filter(models.User.phone == phone).first()
     if not user:
         user = models.User(phone=phone)
@@ -728,8 +732,29 @@ def twilio_webhook(
         db.commit()
         db.refresh(user)
 
-    text = Body.lower().strip()
+    q = models.Query(
+        user_id=user.id,
+        channel="whatsapp",
+        message_text=Body,
+        status="received"
+    )
+    db.add(q)
+    db.commit()
+    db.refresh(q)
 
+    # Simple intent handling demo
+    if "schedule" in Body.lower():
+        answer = get_message("check_schedule", lang)
+    elif "reminder" in Body.lower():
+        answer = get_message("set_reminder", lang, vaccine="COVID-19", date="2025-09-20")
+    else:
+        answer = get_message("welcome", lang)
+
+    q.response_text = answer
+    q.status = "answered"
+    db.commit()
+
+    return answer
     # ---- Vaccination Chat Flow ----
     if "schedule" in text or "check vaccination" in text:
         schedule = [

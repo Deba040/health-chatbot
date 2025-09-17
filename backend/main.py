@@ -823,6 +823,22 @@ def twilio_webhook(
             print("RAG error:", e)
             answer = get_message("default", lang)
 
+
+if "voice" in Body.lower():  # user asks for voice response
+    try:
+        _, media_url = generate_tts_file(answer, "en")
+        if twilio_client:
+            twilio_client.messages.create(
+                from_=TWILIO_NUMBER,
+                to=From,
+                body="Here’s your audio reply 🎧",
+                media_url=[media_url]
+            )
+    except Exception as e:
+        logging.exception("Voice send failed")
+
+    
+
     # --- SMS-specific rule: keep short ---
     if channel == "sms" and len(answer) > 160:
         answer = "Query too long. CHW will follow up."

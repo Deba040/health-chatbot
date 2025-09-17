@@ -607,6 +607,11 @@
 
 # backend/main.py
 import os
+import logging
+from uuid import uuid4
+from gtts import gTTS
+from fastapi.staticfiles import StaticFiles
+from twilio.rest import Client
 import csv
 from datetime import datetime
 from fastapi import FastAPI, Depends, HTTPException, Form
@@ -624,6 +629,25 @@ from backend.utils import get_message
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="AI Health Chatbot Backend (Prototype)")
+# ensure static/tts exists
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "..", "static")
+TTS_DIR = os.path.join(STATIC_DIR, "tts")
+os.makedirs(TTS_DIR, exist_ok=True)
+
+# mount static dir
+app.mount("/static", StaticFiles(directory=os.path.abspath(STATIC_DIR)), name="static")
+# ---------------------------
+# Twilio Setup
+# ---------------------------
+TWILIO_SID = os.getenv("ACe592dfa2c53a9aab2f15af97724f51e9")
+TWILIO_TOKEN = os.getenv("949a2a0dd7244cbd973601e1e71dc2f4")
+TWILIO_NUMBER = os.getenv("+14155238886")  # e.g. whatsapp:+1415xxxx
+BASE_URL = os.getenv("https://ai-health-chatbot-6jaw.onrender.com")  # e.g. https://your-app.onrender.com
+
+twilio_client = None
+if TWILIO_SID and TWILIO_TOKEN:
+    twilio_client = Client(TWILIO_SID, TWILIO_TOKEN)
+
 
 # ---------------------------
 # Pydantic Schemas

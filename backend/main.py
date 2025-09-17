@@ -623,7 +623,7 @@ from backend.db import engine, SessionLocal, Base
 from backend import models
 from backend.rag_utils import retrieve_docs, ask_medgemma
 from backend.utils import get_message
-
+from backend.tts_utils import generate_tts_file
 
 # Auto-create tables
 Base.metadata.create_all(bind=engine)
@@ -833,6 +833,57 @@ def twilio_webhook(
     db.commit()
 
     return answer
+
+# -----------------------------
+# NEW: TTS routes
+# -----------------------------
+
+class TTSIn(BaseModel):
+    text: str
+    lang: str = "en"
+
+@app.post("/tts")
+def tts_generate(payload: TTSIn):
+    try:
+        _, url = generate_tts_file(payload.text, payload.lang)
+        return {"status": "ok", "url": url}
+    except Exception as e:
+        logging.exception("TTS failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class TTSSendIn(BaseModel):
+    to_phone: str       # e.g. whatsapp:+91xxxx
+    text: str
+    lang: str = "en"
+    caption: str = None
+
+@app.post("/tts/send")
+def tts_generate_and_send(payload: TTSSendIn):
+    if not twilio_client:
+        raise HTTPException(status_code=500, detail="Twilio not configured")
+
+    if not BASE_URL:
+        raise HTTPException(status_code=500, detail="BASE_URL must be set")
+
+    try:
+        _, media_url = generate_tts_file(payload.text, payload.lang)
+    except Exception as e:
+        logging.exception("TTS gen failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    try:
+        msg = twilio_client.messages.create(
+            from_=TWILIO_NUMBER,
+            to=payload.to_phone,
+            body=payload.caption or "",
+            media_url=[media_url]
+        )
+        return {"status": "sent", "sid": msg.sid, "media_url": media_url}
+    except Exception as e:
+        logging.exception("Twilio send failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
     # ---- Vaccination Chat Flow ----
     def process_user_message(text: str, db: Session, user: models.User) -> str:
